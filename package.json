@@ -2,6 +2,6 @@
   "name": "yarn-lock",
   "packageManager": "yarn@4.12.0",
   "dependencies": {
-    "zod": "^1"
+    "zod": "^3.0.0"
   }
 }
