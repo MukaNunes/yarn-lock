@@ -71,7 +71,10 @@ done
 # consistência com o package.json final.
 rm -f yarn.lock
 corepack enable
-yarn install
+# Em CI (CI=true) o Yarn Berry liga enableImmutableInstalls por padrão e se
+# recusa a criar/alterar o lockfile (YN0028). Aqui regenerar o lockfile é
+# justamente o objetivo, então o modo imutável precisa ser desligado.
+yarn install --no-immutable
 git add yarn.lock
 
 git commit -m "chore: resolve conflitos de package.json/yarn.lock com ${BASE_REF#origin/}"

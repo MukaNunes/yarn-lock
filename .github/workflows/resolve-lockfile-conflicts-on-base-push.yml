@@ -62,10 +62,14 @@ jobs:
 
       - name: Resolve conflitos restritos a package.json/yarn.lock
         id: resolve
+        # O script é lido da branch base, não do checkout da PR: assim PRs
+        # abertas antes de uma correção no script já rodam a versão atual.
         run: |
-          chmod +x scripts/resolve-lockfile-conflict.sh
+          script="$RUNNER_TEMP/resolve-lockfile-conflict.sh"
+          git show "origin/${{ github.ref_name }}:scripts/resolve-lockfile-conflict.sh" > "$script"
+          chmod +x "$script"
           set +e
-          scripts/resolve-lockfile-conflict.sh "origin/${{ github.ref_name }}"
+          "$script" "origin/${{ github.ref_name }}"
           code=$?
           set -e
           echo "code=$code" >> "$GITHUB_OUTPUT"
