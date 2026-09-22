@@ -31,6 +31,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Atualiza Corepack (evita falha conhecida de verificação de assinatura)
+        run: npm install --global corepack@latest
+
       - name: Configura identidade do bot
         run: |
           git config user.name "github-actions[bot]"
@@ -41,16 +44,25 @@ jobs:
 
       - name: Resolve conflitos restritos a package.json/yarn.lock
         id: resolve
+        # O script é lido da branch base, não do checkout da PR: assim PRs
+        # abertas antes de uma correção no script já rodam a versão atual.
         run: |
-          chmod +x scripts/resolve-lockfile-conflict.sh
-          scripts/resolve-lockfile-conflict.sh "origin/${{ github.event.pull_request.base.ref }}"
+          script="$RUNNER_TEMP/resolve-lockfile-conflict.sh"
+          git show "origin/${{ github.event.pull_request.base.ref }}:scripts/resolve-lockfile-conflict.sh" > "$script"
+          chmod +x "$script"
+          set +e
+          "$script" "origin/${{ github.event.pull_request.base.ref }}"
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Push da resolução
         if: steps.resolve.outcome == 'success'
         run: git push origin HEAD:"${{ github.event.pull_request.head.ref }}"
 
-      - name: Comenta na PR quando não consegue resolver
-        if: failure()
+      - name: Comenta na PR — conflito fora do escopo (requer resolução manual)
+        if: steps.resolve.outputs.code == '10'
         uses: actions/github-script@v7
         with:
           script: |
@@ -59,4 +71,16 @@ jobs:
               repo: context.repo.repo,
               issue_number: context.issue.number,
               body: "⚠️ Este branch tem conflitos com `${{ github.event.pull_request.base.ref }}` que vão além de `package.json`/`yarn.lock`. Resolução automática não aplicada — é necessário resolver manualmente."
+            })
+
+      - name: Comenta na PR — falha inesperada na resolução automática
+        if: failure() && steps.resolve.outputs.code != '10'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: "❌ A resolução automática de `package.json`/`yarn.lock` falhou de forma inesperada (não foi um conflito em outros arquivos). Veja o log do job para detalhes: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             })

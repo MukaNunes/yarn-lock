@@ -19,6 +19,12 @@
 
 set -euo pipefail
 
+# Códigos de saída usados pelo workflow para diferenciar "conflito real fora
+# do escopo" (não deve reportar como bug) de qualquer outra falha inesperada
+# de ferramenta (corepack, yarn, git push, etc — deve ser investigada).
+EXIT_OUT_OF_SCOPE=10
+EXIT_UNEXPECTED_MERGE_STATE=11
+
 BASE_REF="${1:?uso: resolve-lockfile-conflict.sh <base-ref>}"
 ALLOWED_FILES=("package.json" "yarn.lock")
 
@@ -40,7 +46,7 @@ mapfile -t CONFLICTED < <(git diff --name-only --diff-filter=U)
 if [[ ${#CONFLICTED[@]} -eq 0 ]]; then
   echo "git merge falhou sem listar arquivos em conflito (estado inesperado)." >&2
   git merge --abort
-  exit 2
+  exit "$EXIT_UNEXPECTED_MERGE_STATE"
 fi
 
 for f in "${CONFLICTED[@]}"; do
@@ -48,7 +54,7 @@ for f in "${CONFLICTED[@]}"; do
     echo "Conflito fora do escopo permitido: $f"
     echo "Abortando — requer resolução manual."
     git merge --abort
-    exit 1
+    exit "$EXIT_OUT_OF_SCOPE"
   fi
 done
 
@@ -65,7 +71,10 @@ done
 # consistência com o package.json final.
 rm -f yarn.lock
 corepack enable
-yarn install
+# Em CI (CI=true) o Yarn Berry liga enableImmutableInstalls por padrão e se
+# recusa a criar/alterar o lockfile (YN0028). Aqui regenerar o lockfile é
+# justamente o objetivo, então o modo imutável precisa ser desligado.
+yarn install --no-immutable
 git add yarn.lock
 
 git commit -m "chore: resolve conflitos de package.json/yarn.lock com ${BASE_REF#origin/}"
