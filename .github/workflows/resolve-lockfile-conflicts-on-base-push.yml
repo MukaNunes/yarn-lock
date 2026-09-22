@@ -1,0 +1,76 @@
+name: Resolve lockfile conflicts (base branch atualizada)
+
+# Cobre o cenário em que uma PR A é aberta sem conflitos, mas uma PR B é
+# mergeada em main antes dela e gera conflito de package.json/yarn.lock na
+# PR A sem que nenhum evento aconteça na própria PR A. Dispara em todo push
+# na branch base e varre as PRs abertas contra ela.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      prs: ${{ steps.list.outputs.prs }}
+    steps:
+      - name: Lista PRs abertas (mesmo repo, contra a branch que recebeu o push)
+        id: list
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prs=$(gh pr list \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "${GITHUB_REF#refs/heads/}" \
+            --state open \
+            --json number,headRefName,isCrossRepository \
+            -q '[.[] | select(.isCrossRepository == false)]')
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+
+  resolve:
+    needs: discover
+    if: needs.discover.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJson(needs.discover.outputs.prs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.pr.headRefName }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Configura identidade do bot
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Busca a branch base já atualizada
+        run: git fetch origin "${{ github.ref_name }}"
+
+      - name: Resolve conflitos restritos a package.json/yarn.lock
+        id: resolve
+        run: |
+          chmod +x scripts/resolve-lockfile-conflict.sh
+          scripts/resolve-lockfile-conflict.sh "origin/${{ github.ref_name }}"
+
+      - name: Push da resolução
+        if: steps.resolve.outcome == 'success'
+        run: git push origin HEAD:"${{ matrix.pr.headRefName }}"
+
+      - name: Comenta na PR quando não consegue resolver
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ matrix.pr.number }}" --repo "$GITHUB_REPOSITORY" --body \
+            "⚠️ Esta branch ficou com conflitos em relação a \`${{ github.ref_name }}\` que vão além de \`package.json\`/\`yarn.lock\` (provavelmente por causa de uma PR mergeada nesse meio tempo). Resolução automática não aplicada — é necessário resolver manualmente."
