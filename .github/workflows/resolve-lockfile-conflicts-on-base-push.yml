@@ -49,6 +49,9 @@ jobs:
         with:
           node-version: 22
 
+      - name: Atualiza Corepack (evita falha conhecida de verificação de assinatura)
+        run: npm install --global corepack@latest
+
       - name: Configura identidade do bot
         run: |
           git config user.name "github-actions[bot]"
@@ -61,16 +64,29 @@ jobs:
         id: resolve
         run: |
           chmod +x scripts/resolve-lockfile-conflict.sh
+          set +e
           scripts/resolve-lockfile-conflict.sh "origin/${{ github.ref_name }}"
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
 
       - name: Push da resolução
         if: steps.resolve.outcome == 'success'
         run: git push origin HEAD:"${{ matrix.pr.headRefName }}"
 
-      - name: Comenta na PR quando não consegue resolver
-        if: failure()
+      - name: Comenta na PR — conflito fora do escopo (requer resolução manual)
+        if: steps.resolve.outputs.code == '10'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh pr comment "${{ matrix.pr.number }}" --repo "$GITHUB_REPOSITORY" --body \
             "⚠️ Esta branch ficou com conflitos em relação a \`${{ github.ref_name }}\` que vão além de \`package.json\`/\`yarn.lock\` (provavelmente por causa de uma PR mergeada nesse meio tempo). Resolução automática não aplicada — é necessário resolver manualmente."
+
+      - name: Comenta na PR — falha inesperada na resolução automática
+        if: failure() && steps.resolve.outputs.code != '10'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment "${{ matrix.pr.number }}" --repo "$GITHUB_REPOSITORY" --body \
+            "❌ A resolução automática de \`package.json\`/\`yarn.lock\` falhou de forma inesperada (não foi um conflito em outros arquivos). Veja o log do job para detalhes: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
